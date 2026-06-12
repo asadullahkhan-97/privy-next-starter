@@ -30,13 +30,13 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
 } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
-import { encodeFunctionData, parseAbi } from "viem";
+import { encodeFunctionData, parseAbi, parseUnits } from "viem";
 import Section from "../reusables/section";
 import { showSuccessToast, showErrorToast } from "@/components/ui/custom-toast";
 import axios from "axios";
 
 const BASE_SEPOLIA_USDC_ADDRESS =
-  "0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f" as const;
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 const checkingAbi = [
    {
       "inputs": [
@@ -85,6 +85,21 @@ const ERC20_APPROVE_ABI = [
     outputs: [{ type: 'bool' }],
   },
 ] as const;
+const ERC20_TRANSFER_ABI = [
+  {
+    type: 'function' as const,
+    name: 'transfer',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ type: 'bool' }],
+  },
+] as const;
+// USDC on Base mainnet (6 decimals)
+const BASE_MAINNET_USDC_ADDRESS =
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+const BASE_MAINNET_CHAIN_ID = 8453;
 type WalletInfo = {
   address: string;
   type: "ethereum" | "solana";
@@ -125,6 +140,7 @@ const WalletActions = () => {
 
   const [selectedWallet, setSelectedWallet] = useState<WalletInfo | null>(null);
   const [usdcRecipient, setUsdcRecipient] = useState("");
+  const [usdcAmount, setUsdcAmount] = useState("1");
 
   useEffect(() => {
     if (allWallets.length > 0 && !selectedWallet) {
@@ -272,10 +288,10 @@ const WalletActions = () => {
       console.log(signature);
       const newAccessToken = await getAccessToken();
 
-    //  const response = await axios.post("/api/pay-with-usdc", {
-    //     signature: signature,
-    //     accessToken: newAccessToken,
-    //   });
+     const response = await axios.post("/api/pay-with-usdc", {
+        signature: signature,
+        accessToken: newAccessToken,
+      });
     //   showSuccessToast(`Gas-sponsored USDC transfer sent`);
       // const transaction = await sendTransactionEvm(
         // {
@@ -302,60 +318,55 @@ const WalletActions = () => {
       showErrorToast("Please select an Ethereum wallet");
       return;
     }
- 
+ await privy.walletApi.update({
+  walletId: "your-server-wallet-id",
+  policyIds: ["your-policy-id"]
+});
     try {
       const encodedData = encodeFunctionData({
         abi: ERC20_APPROVE_ABI,
         functionName: "approve",
         args:["0x574407ce49c1E7fC8C6bF00f2c5F761F2Bd2b9A9" as `0x${string}`,  BigInt(1_000_000)]
       });
+      let chainId = 8453
       const payload = {
-   caip2: 'eip155:84532',
+   caip2: `eip155:${chainId}`,
    chain_type: 'ethereum',
    method: 'eth_sendTransaction',
    params: {
      transaction: {
        from: selectedWallet.address,
        to: BASE_SEPOLIA_USDC_ADDRESS,
-       chain_id: '0x14a34',
+       chain_id: `0x${chainId.toString(16)}`,
        data: encodedData,
         value: '0x0'
      }
    },
    sponsor: true
  }
+ console.log("payload",JSON.stringify(payload))
       const requestPayload = {
         version: 1,
-        url: `https://auth.privy.io/api/v1/wallets/ubr9nard86yke2u9k169xdnm/rpc`,
+        url: `https://auth.privy.io/api/v1/wallets/mnt53sepskudtqbg33af16k6/rpc`,
         method: 'POST',
         headers: {
-          'privy-app-id': 'cmjgzk05r00q5kz0c1vwhldnk'
+          'privy-app-id': 'cml98u6rf02g8k00b0a5zs0fy'
         },
         body: payload
       }
       const { signature } = await generateAuthorizationSignature(requestPayload);
       console.log(signature);
       const newAccessToken = await getAccessToken();
-
-    //  const response = await axios.post("/api/pay-with-usdc", {
-    //     signature: signature,
-    //     accessToken: newAccessToken,
-    //   });
-    //   showSuccessToast(`Gas-sponsored USDC transfer sent`);
-      // const transaction = await sendTransactionEvm(
-        // {
-          // to: BASE_SEPOLIA_USDC_ADDRESS,
-          // data: encodedData,
-          // value: BigInt(0),
-          // chainId: SPONSORED_CHAIN_ID,
-        // },
-        // { address: selectedWallet.address, sponsor: true }
-      // );
-      // const result =
-        // typeof transaction === "string"
-          // ? transaction
-          // : JSON.stringify(transaction);
-      // showSuccessToast(`Gas-sponsored USDC transfer sent: ${result.slice(0, 20)}...`);
+      console.log(newAccessToken)
+     const response = await axios.post("/api/pay-with-usdc", {
+        signature: signature,
+        accessToken: newAccessToken,
+        data:encodedData,
+        to:BASE_SEPOLIA_USDC_ADDRESS,
+        walletId:"mnt53sepskudtqbg33af16k6"
+      });
+      showSuccessToast(`Gas-sponsored USDC approve sent`);
+     
     } catch (error) {
       console.log(error);
       showErrorToast("Failed to send gas-sponsored USDC transfer");
@@ -363,6 +374,55 @@ const WalletActions = () => {
   };
 
 
+
+  const handleSendUsdcTransferEvm = async () => {
+    if (!isEvmWallet || !selectedWallet) {
+      showErrorToast("Please select an Ethereum wallet");
+      return;
+    }
+    const recipient = usdcRecipient.trim();
+    if (!recipient || !/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
+      showErrorToast("Please enter a valid recipient address (0x...)");
+      return;
+    }
+    let amountUnits: bigint;
+    try {
+      amountUnits = parseUnits(usdcAmount.trim(), 6); // USDC has 6 decimals
+    } catch {
+      showErrorToast("Please enter a valid USDC amount");
+      return;
+    }
+    if (amountUnits <= BigInt(0)) {
+      showErrorToast("Please enter a valid USDC amount");
+      return;
+    }
+    try {
+      const encodedData = encodeFunctionData({
+        abi: ERC20_TRANSFER_ABI,
+        functionName: "transfer",
+        args: [recipient as `0x${string}`, amountUnits],
+      });
+      const transaction = await sendTransactionEvm(
+        {
+          to: BASE_MAINNET_USDC_ADDRESS,
+          data: encodedData,
+          value: BigInt(0),
+          chainId: BASE_MAINNET_CHAIN_ID,
+        },
+        { address: selectedWallet.address }
+      );
+      const result =
+        typeof transaction === "string"
+          ? transaction
+          : JSON.stringify(transaction);
+      showSuccessToast(
+        `USDC transfer sent (${usdcAmount} USDC): ${result.slice(0, 20)}...`
+      );
+    } catch (error) {
+      console.log(error);
+      showErrorToast("Failed to send USDC transfer");
+    }
+  };
 
   const handleSignTypedData = async () => {
     if (!isEvmWallet || !selectedWallet) {
@@ -492,6 +552,11 @@ const WalletActions = () => {
       function: handleSendSponsoredUsdcApproveEvm,
       disabled: !isEvmWallet,
     },
+    {
+      name: "Send USDC (Base mainnet)",
+      function: handleSendUsdcTransferEvm,
+      disabled: !isEvmWallet,
+    },
   ];
 
   return (
@@ -566,6 +631,21 @@ const WalletActions = () => {
           placeholder="0x..."
           value={usdcRecipient}
           onChange={(e) => setUsdcRecipient(e.target.value)}
+          className="w-full pl-3 pr-3 py-2 border border-[#E2E3F0] rounded-md bg-white text-black focus:outline-none focus:ring-1 focus:ring-black font-mono text-sm"
+        />
+      </div>
+      <div className="mb-4">
+        <label htmlFor="usdc-amount" className="block text-sm font-medium mb-2">
+          USDC amount (for &quot;Send USDC&quot;):
+        </label>
+        <input
+          id="usdc-amount"
+          type="number"
+          min="0"
+          step="any"
+          placeholder="1"
+          value={usdcAmount}
+          onChange={(e) => setUsdcAmount(e.target.value)}
           className="w-full pl-3 pr-3 py-2 border border-[#E2E3F0] rounded-md bg-white text-black focus:outline-none focus:ring-1 focus:ring-black font-mono text-sm"
         />
       </div>
