@@ -424,6 +424,55 @@ const WalletActions = () => {
     }
   };
 
+  const handleSendSponsoredUsdcBaseMainnetEvm = async () => {
+    if (!isEvmWallet || !selectedWallet) {
+      showErrorToast("Please select an Ethereum wallet");
+      return;
+    }
+    const recipient = usdcRecipient.trim();
+    if (!recipient || !/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
+      showErrorToast("Please enter a valid recipient address (0x...)");
+      return;
+    }
+    let amountUnits: bigint;
+    try {
+      amountUnits = parseUnits(usdcAmount.trim(), 6); // USDC has 6 decimals
+    } catch {
+      showErrorToast("Please enter a valid USDC amount");
+      return;
+    }
+    if (amountUnits <= BigInt(0)) {
+      showErrorToast("Please enter a valid USDC amount");
+      return;
+    }
+    try {
+      const encodedData = encodeFunctionData({
+        abi: ERC20_TRANSFER_ABI,
+        functionName: "transfer",
+        args: [recipient as `0x${string}`, amountUnits],
+      });
+      const transaction = await sendTransactionEvm(
+        {
+          to: BASE_MAINNET_USDC_ADDRESS,
+          data: encodedData,
+          value: BigInt(0),
+          chainId: BASE_MAINNET_CHAIN_ID,
+        },
+        { address: selectedWallet.address, sponsor: true }
+      );
+      const result =
+        typeof transaction === "string"
+          ? transaction
+          : JSON.stringify(transaction);
+      showSuccessToast(
+        `Gas-sponsored USDC transfer sent (${usdcAmount} USDC): ${result.slice(0, 20)}...`
+      );
+    } catch (error) {
+      console.log(error);
+      showErrorToast("Failed to send gas-sponsored USDC transfer");
+    }
+  };
+
   const handleSignTypedData = async () => {
     if (!isEvmWallet || !selectedWallet) {
       showErrorToast("Please select an Ethereum wallet");
@@ -555,6 +604,11 @@ const WalletActions = () => {
     {
       name: "Send USDC (Base mainnet)",
       function: handleSendUsdcTransferEvm,
+      disabled: !isEvmWallet,
+    },
+    {
+      name: "Send USDC (Base mainnet, gas sponsored)",
+      function: handleSendSponsoredUsdcBaseMainnetEvm,
       disabled: !isEvmWallet,
     },
   ];
